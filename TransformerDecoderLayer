@@ -1,0 +1,44 @@
+import torch
+import torch.nn as nn
+#原型作为查询 查询特征作为kv
+class TransformerDecoderLayer(nn.Module):
+    def __init__(self, d_model=512, d_kv=512, nhead=1, dim_feedforward=2048):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, batch_first=True)
+        self.cross_attn = nn.MultiheadAttention(d_model, nhead, batch_first=True)
+        
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.dropout = nn.Dropout(0.1)
+
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
+        self.activation = nn.ReLU()
+
+    def forward(self, prototype, query_feats):
+        """
+        prototype: (B, 1, 512)
+        query_feats: (B, 64, 64)
+        """
+        B = query_feats.size(0)
+
+        # 1. 映射 query_feats 到 d_model=512
+        if query_feats.size(-1) != 512:
+            query_feats = nn.Linear(query_feats.size(-1), 512).to(query_feats.device)(query_feats)
+
+        # 2. Self-Attention on prototype
+        tgt = prototype  # (B, 1, 512)
+        tgt2, _ = self.self_attn(tgt, tgt, tgt)  # Q=K=V=prototype
+        tgt = self.norm1(tgt + tgt2)
+
+        # 3. Cross-Attention with query_feats as key/value
+        memory = query_feats  # (B, 64, 512)
+        tgt2, _ = self.cross_attn(tgt, memory, memory)  # Q=prototype, K=V=query_feats
+        tgt = self.norm2(tgt + tgt2)
+
+        # 4. Feed Forward
+        tgt2 = self.linear2(self.dropout(self.activation(self.linear1(tgt))))
+        tgt = self.norm3(tgt + self.dropout(tgt2))
+
+        return tgt  # shape: (B, 1, 512)
